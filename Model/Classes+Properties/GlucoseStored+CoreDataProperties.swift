@@ -14,6 +14,7 @@ public extension GlucoseStored {
     @NSManaged var isUploadedToNS: Bool
     @NSManaged var isUploadedToHealth: Bool
     @NSManaged var isUploadedToTidepool: Bool
+    @NSManaged var smoothedGlucose: NSDecimalNumber?
 }
 
 extension GlucoseStored: Identifiable {}

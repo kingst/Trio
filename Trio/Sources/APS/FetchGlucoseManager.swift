@@ -268,6 +268,28 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
         }
     }
 
+    private func lowPassFilterGlucose() async {
+        guard let glucoseStored = try? await fetchGlucose() else { return }
+
+        await context.perform {
+            let glucose = glucoseStored
+                .filter { $0.date != nil }
+                .sorted { $0.date! < $1.date! } // forced unwrap is ok, see previous step
+
+            for (prev, curr) in zip(glucose, glucose.dropFirst()) {
+                var smoothedValue = prev.smoothedGlucose.map({ $0 as Decimal }) ?? Decimal(prev.glucose)
+                let currGlucose = Decimal(curr.glucose)
+                guard let prevDate = prev.date, let currDate = curr.date else { continue }
+                let deltaTime = currDate.timeIntervalSince(prevDate)
+                let timeConstant = TimeInterval(11.3 * 60)
+                let alpha = Decimal(1 - exp(-deltaTime / timeConstant))
+                smoothedValue = alpha * currGlucose + (1 - alpha) * smoothedValue
+                curr.smoothedGlucose = smoothedValue as NSDecimalNumber
+            }
+            try? self.context.save()
+        }
+    }
+
     private func glucoseStoreAndHeartDecision(syncDate: Date, glucose: [BloodGlucose]) async throws {
         // calibration add if required only for sensor
         let newGlucose = overcalibrate(entries: glucose)
@@ -303,21 +325,10 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
         }
         debug(.deviceManager, "New glucose found")
 
-        // filter the data if it is the case
-        if settingsManager.settings.smoothGlucose {
-            // limited to 30 min of old glucose data
-            let oldGlucoseValues = try await processGlucose()
-
-            var smoothedValues = oldGlucoseValues + filtered
-            // smooth with 3 repeats
-            for _ in 1 ... 3 {
-                smoothedValues.smoothSavitzkyGolayQuaDratic(withFilterWidth: 3)
-            }
-            // find the new values only
-            filtered = smoothedValues.filter { $0.dateString > syncDate }
-        }
-
         try await glucoseStorage.storeGlucose(filtered)
+        if settingsManager.settings.smoothGlucose {
+            await lowPassFilterGlucose()
+        }
         deviceDataManager.heartbeat(date: Date())
 
         endBackgroundTaskSafely(&backgroundTaskID, taskName: "Glucose Store and Heartbeat Decision")
