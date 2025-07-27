@@ -98,7 +98,7 @@ final class OpenAPS {
     }
 
     // fetch glucose to pass it to the meal function and to determine basal
-    private func fetchAndProcessGlucose(fetchLimit: Int?) async throws -> String {
+    private func fetchAndProcessGlucose(smoothGlucose: Bool, fetchLimit: Int?) async throws -> String {
         let results = try await CoreDataStack.shared.fetchEntitiesAsync(
             ofType: GlucoseStored.self,
             onContext: context,
@@ -114,8 +114,32 @@ final class OpenAPS {
                 throw CoreDataError.fetchError(function: #function, file: #file)
             }
 
+            let algorithmGlucose = glucoseResults.map { glucose in
+                let glucoseValue: Int16
+                if smoothGlucose, !glucose.isManual, let smoothedGlucose = glucose.smoothedGlucose {
+                    let roundingBehavior = NSDecimalNumberHandler(
+                        roundingMode: .plain,
+                        scale: 0,
+                        raiseOnExactness: false,
+                        raiseOnOverflow: false,
+                        raiseOnUnderflow: false,
+                        raiseOnDivideByZero: false
+                    )
+                    glucoseValue = smoothedGlucose.rounding(accordingToBehavior: roundingBehavior).int16Value
+                } else {
+                    glucoseValue = glucose.glucose
+                }
+                return AlgorithmGlucose(
+                    date: glucose.date,
+                    direction: glucose.direction,
+                    glucose: glucoseValue,
+                    id: glucose.id,
+                    isManual: glucose.isManual
+                )
+            }
+
             // convert to JSON
-            return self.jsonConverter.convertToJSON(glucoseResults)
+            return self.jsonConverter.convertToJSON(algorithmGlucose)
         }
     }
 
@@ -278,6 +302,7 @@ final class OpenAPS {
 
     func determineBasal(
         currentTemp: TempBasal,
+        smoothGlucose: Bool,
         clock: Date = Date(),
         simulatedCarbsAmount: Decimal? = nil,
         simulatedBolusAmount: Decimal? = nil,
@@ -292,7 +317,7 @@ final class OpenAPS {
         // Perform asynchronous calls in parallel
         async let pumpHistoryObjectIDs = fetchPumpHistoryObjectIDs() ?? []
         async let carbs = fetchAndProcessCarbs(additionalCarbs: simulatedCarbsAmount ?? 0, carbsDate: simulatedCarbsDate)
-        async let glucose = fetchAndProcessGlucose(fetchLimit: 72)
+        async let glucose = fetchAndProcessGlucose(smoothGlucose: smoothGlucose, fetchLimit: 72)
         async let prepareTrioCustomOrefVariables = prepareTrioCustomOrefVariables()
         async let profileAsync = loadFileFromStorageAsync(name: Settings.profile)
         async let basalAsync = loadFileFromStorageAsync(name: Settings.basalProfile)
@@ -462,13 +487,13 @@ final class OpenAPS {
         }
     }
 
-    func autosense() async throws -> Autosens? {
+    func autosense(smoothGlucose: Bool) async throws -> Autosens? {
         debug(.openAPS, "Start autosens")
 
         // Perform asynchronous calls in parallel
         async let pumpHistoryObjectIDs = fetchPumpHistoryObjectIDs() ?? []
         async let carbs = fetchAndProcessCarbs()
-        async let glucose = fetchAndProcessGlucose(fetchLimit: nil)
+        async let glucose = fetchAndProcessGlucose(smoothGlucose: smoothGlucose, fetchLimit: nil)
         async let getProfile = loadFileFromStorageAsync(name: Settings.profile)
         async let getBasalProfile = loadFileFromStorageAsync(name: Settings.basalProfile)
         async let getTempTargets = loadFileFromStorageAsync(name: Settings.tempTargets)

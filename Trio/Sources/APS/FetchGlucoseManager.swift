@@ -269,9 +269,7 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
         guard let glucoseStored = try? await fetchGlucose() else { return }
 
         await context.perform {
-            // TODO: Should we only smooth sensor readings `!isManual`?
-            // The previous smoothing function ran on all glucose readings
-            // and it's not clear how consistent we are in setting this property
+            // only filter CGM values, so ignore manually entered glucose
             let glucose = glucoseStored
                 .filter { !$0.isManual }
                 .filter { $0.date != nil }

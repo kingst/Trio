@@ -135,7 +135,20 @@ extension NSPredicate {
     }
 }
 
-extension GlucoseStored: Encodable {
+// In order to show the correct direction in the bobble we convert the direction property of the NSManagedObject GlucoseStored back to the Direction type
+extension GlucoseStored {
+    var directionEnum: BloodGlucose.Direction? {
+        BloodGlucose.Direction(rawValue: direction ?? "")
+    }
+}
+
+struct AlgorithmGlucose: Encodable {
+    var date: Date?
+    var direction: String?
+    var glucose: Int16
+    var id: UUID?
+    var isManual: Bool
+
     enum CodingKeys: String, CodingKey {
         case date
         case dateString
@@ -168,12 +181,5 @@ extension GlucoseStored: Encodable {
         } else {
             try container.encode(glucose, forKey: .sgv)
         }
-    }
-}
-
-// In order to show the correct direction in the bobble we convert the direction property of the NSManagedObject GlucoseStored back to the Direction type
-extension GlucoseStored {
-    var directionEnum: BloodGlucose.Direction? {
-        BloodGlucose.Direction(rawValue: direction ?? "")
     }
 }

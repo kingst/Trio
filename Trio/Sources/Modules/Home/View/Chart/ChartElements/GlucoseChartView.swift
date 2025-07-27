@@ -65,11 +65,6 @@ struct GlucoseChartView: ChartContent {
                 .foregroundStyle(Color.purple)
             }
         }
-
-        // Draw line on top
-        if isSmoothingEnabled {
-            let smoothedData = glucoseData.filter { $0.smoothedGlucose != nil }
-        }
     }
 }
 
