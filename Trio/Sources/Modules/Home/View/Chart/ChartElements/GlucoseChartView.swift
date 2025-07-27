@@ -15,7 +15,8 @@ struct GlucoseChartView: ChartContent {
         drawGlucoseChart()
     }
 
-    private func drawGlucoseChart() -> some ChartContent {
+    @ChartContentBuilder private func drawGlucoseChart() -> some ChartContent {
+        // Draw points first
         ForEach(glucoseData) { item in
             let glucoseToDisplay = units == .mgdL ? Decimal(item.glucose) : Decimal(item.glucose).asMmolL
 
@@ -52,14 +53,22 @@ struct GlucoseChartView: ChartContent {
                         .foregroundStyle(pointMarkColor)
                 }
             }
+        }
 
+        ForEach(glucoseData) { item in
             if isSmoothingEnabled, let smoothedGlucose = item.smoothedGlucose {
                 LineMark(
                     x: .value("Time", item.date ?? Date(), unit: .second),
-                    y: .value("Value", smoothedGlucose as Decimal)
+                    y: .value("Value", smoothedGlucose as Decimal),
+                    series: .value("Type", "Smoothed")
                 )
                 .foregroundStyle(Color.purple)
             }
+        }
+
+        // Draw line on top
+        if isSmoothingEnabled {
+            let smoothedData = glucoseData.filter { $0.smoothedGlucose != nil }
         }
     }
 }

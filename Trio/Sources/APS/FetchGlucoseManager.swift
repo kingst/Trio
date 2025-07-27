@@ -33,6 +33,7 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
     @Injected() var nightscoutManager: NightscoutManager!
     @Injected() var tidepoolService: TidepoolManager!
     @Injected() var apsManager: APSManager!
+    @Injected() var broadcaster: Broadcaster!
     @Injected() var settingsManager: SettingsManager!
     @Injected() var healthKitManager: HealthKitManager!
     @Injected() var deviceDataManager: DeviceDataManager!
@@ -49,6 +50,8 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
             UserDefaults.standard.clearLegacyCGMManagerRawValue()
         }
     }
+
+    var smoothGlucose = false
 
     @PersistedProperty(key: "CGMManagerState") var rawCGMManager: CGMManager.RawValue?
 
@@ -76,6 +79,7 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
             cgmGlucoseSourceType: settingsManager.settings.cgm,
             cgmGlucosePluginId: settingsManager.settings.cgmPluginIdentifier
         )
+        smoothGlucose = settingsManager.settings.smoothGlucose
         subscribe()
     }
 
@@ -117,6 +121,8 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
             .store(in: &lifetime)
         timer.fire()
         timer.resume()
+
+        broadcaster.register(SettingsObserver.self, observer: self)
     }
 
     /// Store new glucose readings from the CGM manager
@@ -238,37 +244,28 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
         try await CoreDataStack.shared.fetchEntitiesAsync(
             ofType: GlucoseStored.self,
             onContext: context,
-            predicate: NSPredicate.predicateFor30MinAgo,
+            predicate: NSPredicate.predicateForOneDayAgo,
             key: "date",
             ascending: false,
-            fetchLimit: 6
+            fetchLimit: 1000
         ) as? [GlucoseStored]
     }
 
-    private func processGlucose() async throws -> [BloodGlucose] {
-        let results = try await fetchGlucose()
-
-        return try await context.perform {
-            guard let results else {
-                throw CoreDataError.fetchError(function: #function, file: #file)
-            }
-            return results.map { result in
-                BloodGlucose(
-                    sgv: Int(result.glucose),
-                    direction: BloodGlucose.Direction(from: result.direction ?? ""),
-                    date: Decimal(result.date?.timeIntervalSince1970 ?? Date().timeIntervalSince1970) * 1000,
-                    dateString: result.date ?? Date(),
-                    unfiltered: Decimal(result.glucose),
-                    filtered: Decimal(result.glucose),
-                    noise: nil,
-                    glucose: Int(result.glucose),
-                    type: "sgv"
-                )
-            }
-        }
-    }
-
+    /// Run a lowPassFilter on glucose values for the last day
+    ///
+    /// This is a time-adjusted IIR low-pass filter with a time constant of 11.3 minutes.
+    /// If you run this filter on G7 data it should come close to matching the noise
+    /// profile of a G6. It will lag behind the G7 by 7 minutes but still be 3.75 minutes
+    /// ahead of the G6 based on a few simple experiments.
+    ///
+    /// Note: In this implementation we run the lowPassFilter over the last 24 hours
+    /// of data to cover two cases:
+    /// - smoothing is just turned on
+    /// - backfill glucose added (which can come out of order)
+    /// I'm sure we can be more precise in our calculations but it's better to keep
+    /// it simple for now.
     private func lowPassFilterGlucose() async {
+        let startTime = Date()
         guard let glucoseStored = try? await fetchGlucose() else { return }
 
         await context.perform {
@@ -288,6 +285,10 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
             }
             try? self.context.save()
         }
+        let endTime = Date()
+        let duration = endTime.timeIntervalSince(startTime)
+        let durationString = String(format: "%0.04f", duration)
+        debug(.default, "Low pass filter duration: \(durationString)s")
     }
 
     private func glucoseStoreAndHeartDecision(syncDate: Date, glucose: [BloodGlucose]) async throws {
@@ -386,5 +387,19 @@ extension CGMManager {
             "managerIdentifier": pluginIdentifier,
             "state": rawState
         ]
+    }
+}
+
+extension BaseFetchGlucoseManager: SettingsObserver {
+    /// Smooth glucose data when smoothing is turned on
+    func settingsDidChange(_: TrioSettings) {
+        if settingsManager.settings.smoothGlucose, !smoothGlucose {
+            glucoseStoreAndHeartLock.wait()
+            Task {
+                await self.lowPassFilterGlucose()
+                glucoseStoreAndHeartLock.signal()
+            }
+        }
+        smoothGlucose = settingsManager.settings.smoothGlucose
     }
 }
