@@ -1,4 +1,5 @@
 import Combine
+import CoreData
 import Foundation
 import HealthKit
 import LoopKit
@@ -240,7 +241,7 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
         return Manager.init(rawState: rawState)
     }
 
-    private func fetchGlucose() async throws -> [GlucoseStored]? {
+    private func fetchGlucose(context: NSManagedObjectContext) async throws -> [GlucoseStored]? {
         try await CoreDataStack.shared.fetchEntitiesAsync(
             ofType: GlucoseStored.self,
             onContext: context,
@@ -264,9 +265,11 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
     /// - backfill glucose added (which can come out of order)
     /// I'm sure we can be more precise in our calculations but it's better to keep
     /// it simple for now.
-    private func lowPassFilterGlucose() async {
+    ///
+    /// Expose this function for testing
+    /* private */ func lowPassFilterGlucose(context: NSManagedObjectContext) async {
         let startTime = Date()
-        guard let glucoseStored = try? await fetchGlucose() else { return }
+        guard let glucoseStored = try? await fetchGlucose(context: context) else { return }
 
         await context.perform {
             // only filter CGM values, so ignore manually entered glucose
@@ -330,7 +333,7 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
 
         try await glucoseStorage.storeGlucose(filtered)
         if settingsManager.settings.smoothGlucose {
-            await lowPassFilterGlucose()
+            await lowPassFilterGlucose(context: context)
         }
         deviceDataManager.heartbeat(date: Date())
 
@@ -398,7 +401,7 @@ extension BaseFetchGlucoseManager: SettingsObserver {
         if settingsManager.settings.smoothGlucose, !smoothGlucose {
             glucoseStoreAndHeartLock.wait()
             Task {
-                await self.lowPassFilterGlucose()
+                await self.lowPassFilterGlucose(context: context)
                 glucoseStoreAndHeartLock.signal()
             }
         }

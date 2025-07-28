@@ -142,7 +142,8 @@ extension GlucoseStored {
     }
 }
 
-struct AlgorithmGlucose: Encodable {
+/// Helper class so that we can have a plain Swift object to serialize GlucoseStorage
+struct AlgorithmGlucose: Codable {
     var date: Date?
     var direction: String?
     var glucose: Int16
@@ -157,6 +158,48 @@ struct AlgorithmGlucose: Encodable {
         case direction
         case id
         case type
+    }
+
+    init(date: Date?, direction: String?, glucose: Int16, id: UUID?, isManual: Bool) {
+        self.date = date
+        self.direction = direction
+        self.glucose = glucose
+        self.id = id
+        self.isManual = isManual
+    }
+
+    // this constructor is just for testing
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if let dateString = try container.decodeIfPresent(String.self, forKey: .dateString) {
+            let dateFormatter = ISO8601DateFormatter()
+            dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            date = dateFormatter.date(from: dateString)
+        } else if let dateStringTimestamp = try container.decodeIfPresent(String.self, forKey: .date),
+                  let dateTimestamp = TimeInterval(dateStringTimestamp)
+        {
+            date = Date(timeIntervalSince1970: dateTimestamp / 1000)
+        } else {
+            date = nil
+        }
+
+        direction = try container.decodeIfPresent(String.self, forKey: .direction)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id)
+
+        if let glucoseValue = try container.decodeIfPresent(Int16.self, forKey: .glucose) {
+            glucose = glucoseValue
+            isManual = true
+        } else if let sgvValue = try container.decodeIfPresent(Int16.self, forKey: .sgv) {
+            glucose = sgvValue
+            isManual = false
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sgv,
+                in: container,
+                debugDescription: "Neither 'glucose' nor 'sgv' key found or value is not Int16"
+            )
+        }
     }
 
     public func encode(to encoder: Encoder) throws {

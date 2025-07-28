@@ -98,8 +98,13 @@ final class OpenAPS {
     }
 
     // fetch glucose to pass it to the meal function and to determine basal
-    private func fetchAndProcessGlucose(smoothGlucose: Bool, fetchLimit: Int?) async throws -> String {
-        let results = try await CoreDataStack.shared.fetchEntitiesAsync(
+    // Expose this function for testing
+    /* private */ func fetchAndProcessGlucose(
+        context: NSManagedObjectContext,
+        smoothGlucose: Bool,
+        fetchLimit: Int?
+    ) async throws -> String {
+        let results = try CoreDataStack.shared.fetchEntities(
             ofType: GlucoseStored.self,
             onContext: context,
             predicate: NSPredicate.predicateForOneDayAgoInMinutes,
@@ -114,7 +119,7 @@ final class OpenAPS {
                 throw CoreDataError.fetchError(function: #function, file: #file)
             }
 
-            let algorithmGlucose = glucoseResults.map { glucose in
+            let algorithmGlucose = glucoseResults.map { glucose -> AlgorithmGlucose in
                 let glucoseValue: Int16
                 if smoothGlucose, !glucose.isManual, let smoothedGlucose = glucose.smoothedGlucose {
                     let roundingBehavior = NSDecimalNumberHandler(
@@ -137,8 +142,6 @@ final class OpenAPS {
                     isManual: glucose.isManual
                 )
             }
-
-            // convert to JSON
             return self.jsonConverter.convertToJSON(algorithmGlucose)
         }
     }
@@ -317,7 +320,7 @@ final class OpenAPS {
         // Perform asynchronous calls in parallel
         async let pumpHistoryObjectIDs = fetchPumpHistoryObjectIDs() ?? []
         async let carbs = fetchAndProcessCarbs(additionalCarbs: simulatedCarbsAmount ?? 0, carbsDate: simulatedCarbsDate)
-        async let glucose = fetchAndProcessGlucose(smoothGlucose: smoothGlucose, fetchLimit: 72)
+        async let glucose = fetchAndProcessGlucose(context: context, smoothGlucose: smoothGlucose, fetchLimit: 72)
         async let prepareTrioCustomOrefVariables = prepareTrioCustomOrefVariables()
         async let profileAsync = loadFileFromStorageAsync(name: Settings.profile)
         async let basalAsync = loadFileFromStorageAsync(name: Settings.basalProfile)
@@ -493,7 +496,7 @@ final class OpenAPS {
         // Perform asynchronous calls in parallel
         async let pumpHistoryObjectIDs = fetchPumpHistoryObjectIDs() ?? []
         async let carbs = fetchAndProcessCarbs()
-        async let glucose = fetchAndProcessGlucose(smoothGlucose: smoothGlucose, fetchLimit: nil)
+        async let glucose = fetchAndProcessGlucose(context: context, smoothGlucose: smoothGlucose, fetchLimit: nil)
         async let getProfile = loadFileFromStorageAsync(name: Settings.profile)
         async let getBasalProfile = loadFileFromStorageAsync(name: Settings.basalProfile)
         async let getTempTargets = loadFileFromStorageAsync(name: Settings.tempTargets)
